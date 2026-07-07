@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Database, Lock, RadioTower, ShieldCheck } from "lucide-react";
+import { Database, Lock, PlusCircle, RadioTower, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   PublishLogTable,
 } from "@/components/social-components";
 import { ReleaseStatusCard } from "@/components/release-status";
+import { LocalEngineConfigPanel } from "@/components/local-engine-config";
 import { useAuth } from "@/lib/auth";
 import { callEdgeFunction, createAdminUser, isSupabaseConfigured } from "@/lib/supabase/client";
 import { logRepository } from "@/lib/repositories/log-repository";
@@ -40,6 +41,28 @@ type AdminStatus = {
   storage?: Record<string, boolean>;
   edgeFunctions?: Record<string, boolean>;
 };
+
+type SecretField = {
+  key: string;
+  label: string;
+  hint: string;
+  sensitive: boolean;
+  statusKey?: string;
+};
+
+const SECRET_FIELDS: SecretField[] = [
+  { key: "OPENAI_API_KEY", label: "OpenAI API Key", hint: "Chave usada pelas Edge Functions de conteúdo (o motor local usa a própria .env.engine).", sensitive: true, statusKey: "openaiApiKey" },
+  { key: "OPENAI_TEXT_MODEL", label: "Modelo de texto OpenAI", hint: "Ex.: gpt-4o-mini.", sensitive: false },
+  { key: "OPENAI_IMAGE_MODEL", label: "Modelo de imagem OpenAI", hint: "Ex.: gpt-image-1.", sensitive: false },
+  { key: "META_PAGE_ACCESS_TOKEN", label: "Meta Page Access Token", hint: "Token de página do Facebook/Instagram Business.", sensitive: true, statusKey: "metaPageAccessToken" },
+  { key: "META_PAGE_ID", label: "Meta Page ID", hint: "ID da página do Facebook.", sensitive: false, statusKey: "metaPageId" },
+  { key: "META_INSTAGRAM_BUSINESS_ID", label: "Instagram Business ID", hint: "ID da conta comercial do Instagram.", sensitive: false, statusKey: "metaInstagramBusinessId" },
+  { key: "META_GRAPH_VERSION", label: "Versão da Graph API", hint: "Ex.: v21.0.", sensitive: false },
+  { key: "WORKER_DEVICE_KEY", label: "Worker Device Key", hint: "Chave que o Motor Local usa para autenticar (deve bater com SUPABASE_WORKER_DEVICE_KEY no .env.engine).", sensitive: true, statusKey: "workerKey" },
+  { key: "PUBLISH_CRON_SECRET", label: "Publish Cron Secret", hint: "Segredo do cron que dispara a publicação agendada.", sensitive: true, statusKey: "publishCronSecret" },
+  { key: "PUBLIC_MEDIA_BASE_URL", label: "URL pública de mídia", hint: "Base HTTPS pública usada para a Meta acessar as imagens/vídeos.", sensitive: false, statusKey: "publicMediaBaseUrl" },
+  { key: "CORS_ALLOW_ORIGIN", label: "CORS Allow Origin", hint: "Domínio(s) permitido(s) a chamar as Edge Functions.", sensitive: false },
+];
 
 function mapLog(row: SystemLogRow): SystemLog {
   return {
@@ -149,7 +172,7 @@ function Admin() {
           <TabsTrigger value="versao">Versão estável</TabsTrigger>
         </TabsList>
         <TabsContent value="chaves">
-          <RuntimeSettingsPanel onSaved={testConnections} />
+          <RuntimeSettingsPanel status={status} onSaved={testConnections} />
           <div className="grid gap-4 md:grid-cols-2">
             <ConnectionStatus
               label="Supabase frontend"
@@ -273,49 +296,210 @@ function Admin() {
           <PublishLogTable logs={logs} />
         </TabsContent>
         <TabsContent value="versao">
-          <ReleaseStatusCard />
+          <ReleaseStatusCard
+            liveStatus={{
+              metaReady: Boolean(
+                env.metaPageAccessToken && env.metaInstagramBusinessId && env.metaPageId && env.publicMediaBaseUrl,
+              ),
+              dbReady: Boolean(status?.database?.connected && requiredTables.every((table) => tables[table])),
+            }}
+          />
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function RuntimeSettingsPanel({ onSaved }: { onSaved: () => Promise<void> }) {
+function RuntimeSettingsPanel({
+  status,
+  onSaved,
+}: {
+  status: AdminStatus | null;
+  onSaved: () => Promise<void>;
+}) {
+  const { session } = useAuth();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [customFields, setCustomFields] = useState<{ id: string; name: string; value: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const env = status?.environment ?? {};
+  const secretsWriteReady = Boolean(env.secretsWriteConfigured);
+
+  function update(key: string, value: string) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
+
+  function addCustomField() {
+    setCustomFields((current) => [...current, { id: crypto.randomUUID(), name: "", value: "" }]);
+  }
+
+  function updateCustomField(id: string, patch: Partial<{ name: string; value: string }>) {
+    setCustomFields((current) => current.map((field) => (field.id === id ? { ...field, ...patch } : field)));
+  }
+
+  function removeCustomField(id: string) {
+    setCustomFields((current) => current.filter((field) => field.id !== id));
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!session) return;
+    const custom = Object.fromEntries(
+      customFields
+        .filter((field) => field.name.trim() && field.value.trim())
+        .map((field) => [field.name.trim().toUpperCase().replace(/\s+/g, "_"), field.value.trim()]),
+    );
+    const secrets = {
+      ...Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim().length > 0)),
+      ...custom,
+    };
+    if (!Object.keys(secrets).length) {
+      toast.info("Preencha ao menos uma credencial para salvar.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const result = await callEdgeFunction<{ ok: true; saved: string[]; message?: string }>(
+        "admin-secrets",
+        session.access_token,
+        { secrets },
+      );
+      toast.success(result.message ?? `${result.saved.length} credencial(is) salva(s).`);
+      setValues({});
+      setCustomFields([]);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar credenciais.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="mb-5 rounded-3xl border border-primary/20 bg-card p-5 shadow-soft">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <h3 className="text-lg font-bold">Credenciais seguras da V2</h3>
+          <h3 className="text-lg font-bold">Credenciais</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            A V2 não recebe, salva nem mostra chaves secretas pelo frontend. Configure tudo no painel do Supabase em Edge Function Secrets e mantenha a chave OpenAI pesada apenas no arquivo local do Motor EXE.
+            Edite as credenciais reais do backend por aqui. Ao salvar, os valores vão direto para os
+            Edge Function Secrets do Supabase via Management API — nunca ficam salvos ou exibidos no navegador.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="rounded-full"
-          onClick={() => void onSaved()}
-        >
+        <Button type="button" variant="outline" className="rounded-full" onClick={() => void onSaved()}>
           Revalidar status
         </Button>
       </div>
-      <div className="mt-5 grid gap-4 md:grid-cols-3">
-        <div className="rounded-2xl border border-border bg-background/60 p-4">
-          <b className="text-sm">Vercel</b>
-          <p className="mt-2 text-xs text-muted-foreground">Somente URL pública do Supabase, chave anon pública, URL do app e ambiente.</p>
+
+      {!secretsWriteReady ? (
+        <div className="mt-4 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
+          Edição direta ainda não liberada: falta configurar <code>SUPABASE_ACCESS_TOKEN</code> como Edge Secret
+          (gere em supabase.com/dashboard/account/tokens). É o único passo manual — depois disso, tudo abaixo
+          passa a salvar direto por aqui.
         </div>
-        <div className="rounded-2xl border border-border bg-background/60 p-4">
-          <b className="text-sm">Supabase Edge</b>
-          <p className="mt-2 text-xs text-muted-foreground">Service role, chave do worker, segredo do cron e credenciais Meta ficam em Secrets.</p>
-        </div>
-        <div className="rounded-2xl border border-border bg-background/60 p-4">
-          <b className="text-sm">Motor Local</b>
-          <p className="mt-2 text-xs text-muted-foreground">Arquivo .env.engine local guarda Supabase URL, anon pública, chave do worker e chave OpenAI.</p>
-        </div>
+      ) : null}
+      <div className="mt-4 rounded-2xl border border-border bg-background/60 p-4 text-xs text-muted-foreground">
+        <b className="text-foreground">Sobre a URL do banco de dados:</b> <code>SUPABASE_URL</code>,{" "}
+        <code>SUPABASE_ANON_KEY</code> e a chave de service role são reservadas pelo próprio
+        Supabase e não podem ser sobrescritas por secrets — elas sempre refletem o projeto onde as Edge Functions
+        estão implantadas. Para apontar o app para outro projeto/banco Supabase, é preciso redeploy do frontend
+        na Vercel com novas variáveis <code>VITE_SUPABASE_URL</code>/<code>VITE_SUPABASE_ANON_KEY</code>; não é
+        algo editável em runtime por aqui.
       </div>
-      <p className="mt-4 text-xs text-muted-foreground">
-        Esta tela agora só valida booleanos retornados por admin-status. Nenhum segredo é enviado ao navegador.
-      </p>
+      {error ? (
+        <div className="mt-4">
+          <ErrorState message={error} />
+        </div>
+      ) : null}
+
+      <form onSubmit={save} className="mt-5 grid gap-4 md:grid-cols-2">
+        {SECRET_FIELDS.map((field) => {
+          const configured = field.statusKey ? Boolean(env[field.statusKey]) : undefined;
+          return (
+            <label key={field.key} className="space-y-1.5">
+              <span className="flex items-center gap-2 text-sm font-semibold">
+                {field.label}
+                {configured !== undefined ? (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[0.65rem] font-semibold uppercase ${
+                      configured ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {configured ? "configurado" : "não configurado"}
+                  </span>
+                ) : null}
+              </span>
+              <Input
+                type={field.sensitive ? "password" : "text"}
+                value={values[field.key] ?? ""}
+                onChange={(event) => update(field.key, event.target.value)}
+                placeholder={field.sensitive ? "••••••••" : "Digite aqui..."}
+              />
+              <span className="block text-xs text-muted-foreground">{field.hint}</span>
+            </label>
+          );
+        })}
+
+        <div className="md:col-span-2 space-y-3 rounded-2xl border border-dashed border-border p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <b className="text-sm">Adicionar outra API/credencial</b>
+              <p className="text-xs text-muted-foreground">
+                Para qualquer chave que não esteja na lista acima (nova integração, API extra etc.).
+              </p>
+            </div>
+            <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={addCustomField}>
+              <PlusCircle className="h-4 w-4" /> Adicionar campo
+            </Button>
+          </div>
+          {customFields.map((field) => (
+            <div key={field.id} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                value={field.name}
+                onChange={(event) => updateCustomField(field.id, { name: event.target.value })}
+                placeholder="NOME_DA_VARIAVEL (ex.: RESEND_API_KEY)"
+                className="sm:w-1/2"
+              />
+              <Input
+                type="password"
+                value={field.value}
+                onChange={(event) => updateCustomField(field.id, { value: event.target.value })}
+                placeholder="Valor"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="shrink-0 text-destructive"
+                onClick={() => removeCustomField(field.id)}
+              >
+                Remover
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <div className="md:col-span-2">
+          <Button
+            type="submit"
+            disabled={saving || !session}
+            className="rounded-full bg-gradient-primary text-primary-foreground"
+          >
+            {saving ? "Salvando..." : "Salvar credenciais preenchidas"}
+          </Button>
+        </div>
+      </form>
+
+      <div className="mt-5 space-y-2">
+        <b className="text-sm">Motor Local</b>
+        <p className="text-xs text-muted-foreground">
+          A chave OpenAI pesada e o modelo de IA do motor ficam no arquivo <code>.env.engine</code> deste
+          computador (nunca passam pelo Supabase). As credenciais acima valem para as Edge Functions e para
+          o painel Vercel. Para editar a chave/modelo do motor local, use o painel abaixo (funciona quando
+          este painel está aberto dentro do app desktop MYINC).
+        </p>
+        <LocalEngineConfigPanel />
+      </div>
     </div>
   );
 }

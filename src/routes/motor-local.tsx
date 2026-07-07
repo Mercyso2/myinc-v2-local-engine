@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/social-components";
+import { LocalEngineConfigPanel } from "@/components/local-engine-config";
 import { useAuth } from "@/lib/auth";
 import { selectRows } from "@/lib/supabase/client";
 import type { GenerationJobRow } from "@/lib/supabase/types";
@@ -119,6 +120,8 @@ function MotorLocal() {
           <MonitorCog className="h-12 w-12 text-sidebar-primary" />
         </div>
       </div>
+
+      <LocalEngineConfigPanel />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Metric label="Pendentes" value={jobCounts.pending} />

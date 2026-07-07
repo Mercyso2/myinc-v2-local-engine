@@ -71,4 +71,21 @@ function isRunning() {
   return Boolean(child && !child.killed);
 }
 
-module.exports = { startEngine, stopEngine, isRunning, engineScript, engineCwd };
+function restartEngine(baseDir) {
+  stopEngine();
+  return startEngine(baseDir || lastBaseDir);
+}
+
+function envFilePath(baseDir) {
+  return path.join(engineCwd(baseDir || lastBaseDir), '.env.engine');
+}
+
+module.exports = {
+  startEngine,
+  stopEngine,
+  restartEngine,
+  isRunning,
+  engineScript,
+  engineCwd,
+  envFilePath,
+};

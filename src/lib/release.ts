@@ -9,34 +9,37 @@ export const APP_RELEASE = {
     "Versão V2 em 3 camadas: frontend controla, Supabase organiza fila/storage/logs, Motor Local EXE executa geração pesada e publicador Edge cuida apenas de mídia pronta.",
 } as const;
 
+// `checkable` marca as áreas em que dá para checar estado real em runtime
+// (ver ReleaseStatusCard). As demais são apenas notas de arquitetura/design —
+// não fingem um teste que não foi feito, por isso não recebem bolinha verde.
 export const STABILITY_GATES = [
   {
     area: "Segurança",
-    status: "aprovado",
+    checkable: false,
     detail:
       "Segredos ficam em variáveis de ambiente/server-side e campos sensíveis são mascarados no Painel ADM.",
   },
   {
     area: "Publicação Meta",
-    status: "aprovado",
+    checkable: true,
     detail:
       "Publicação real só ocorre após validação de token, IDs, aprovação do post e URL pública HTTPS.",
   },
   {
     area: "Fluxo editorial",
-    status: "aprovado",
+    checkable: false,
     detail:
       "Planejamento, produção, revisão, comentários, calendário e fila estão conectados por estados consistentes.",
   },
   {
     area: "Banco de dados",
-    status: "aprovado",
+    checkable: true,
     detail: "Migração Supabase/Postgres inclui as tabelas principais e índices de operação.",
   },
   {
     area: "Build",
-    status: "aprovado",
-    detail: "Versão validada com lint, build e captura visual da central.",
+    checkable: false,
+    detail: "Versão validada com lint, build e captura visual da central no momento do deploy.",
   },
 ] as const;
 

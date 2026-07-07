@@ -6,7 +6,6 @@ import {
   Play,
   RefreshCw,
   Rocket,
-  Sparkles,
   Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +22,7 @@ import {
   PromptViewer,
   QueuePanel,
 } from "@/components/social-components";
+import { ManualPublishPanel } from "@/components/manual-publish-panel";
 import { useAuth } from "@/lib/auth";
 import {
   callEdgeFunction,
@@ -42,9 +42,6 @@ import {
   generateVideosBatch,
   hydratePostRelations,
   improvePost,
-  reviewPostQuality,
-  renderPostTemplate,
-  renderTemplatesBatch,
   postRepository,
   publishPostNow,
   requestPostChanges,
@@ -250,48 +247,31 @@ function Conteudos() {
     }
   }
 
-  async function produceAll() {
-    if (!session || !readyForProduction.length) return;
-    const brandId = profile?.brand_id ?? readyForProduction[0]?.brandId;
+  // Ação única e objetiva para imagens/carrosséis: antes existiam dois botões
+  // ("enviar para fila" e "gerar imagens") chamando o mesmo enqueue-generation
+  // com textos diferentes — confuso e redundante. Agora é uma só chamada.
+  async function generateImagesAndCarousels() {
+    if (!session) return;
+    const targets = readyForProduction.length ? readyForProduction : imageTargets;
+    if (!targets.length) {
+      toast.info("Nenhum post pendente de imagem/carrossel.");
+      return { message: "Nenhum post pendente de imagem/carrossel." };
+    }
     const result = await createProductionBatch(session.access_token, {
-      brandId,
-      postIds: readyForProduction.map((post) => post.id),
+      brandId: profile?.brand_id ?? targets[0]?.brandId,
+      postIds: targets.map((post) => post.id),
       instruction:
-        "Produção em massa definitiva: usar memória da marca, Cérebro IA, biblioteca, formato, carrossel, vídeo/reels e critérios premium MYINC.",
+        "Gerar/atualizar imagens e carrosséis premium: usar memória da marca, Cérebro IA, biblioteca e formato correto, com render final e logo real.",
     });
     return {
-      message: `${result.queued ?? readyForProduction.length} job(s) criados na fila externa. Use Processar agora para executar sem travar a tela.`,
+      message: `${result.queued ?? targets.length} job(s) de imagem/carrossel enviados para a fila. Use Processar agora para executar.`,
     };
   }
 
   async function produceAndProcessAll() {
     if (!session) return;
-    if (readyForProduction.length) await produceAll();
+    if (readyForProduction.length) await generateImagesAndCarousels();
     return processNow(12);
-  }
-
-  async function generateAllImages() {
-    if (!session) return;
-    const targets = imageTargets.length
-      ? imageTargets
-      : activePosts.filter((post) => !post.mediaUrl);
-    if (!targets.length) {
-      toast.info(
-        "Todos os posts ativos já possuem mídia ou não precisam de imagem.",
-      );
-      return { message: "Nenhum post ativo pendente de imagem." };
-    }
-    const result = await generateImagesBatch(session.access_token, {
-      brandId: profile?.brand_id ?? targets[0]?.brandId,
-      postIds: targets.map((post) => post.id),
-      onlyMissing: true,
-      limit: targets.length,
-    });
-    return {
-      message:
-        result.message ??
-        `${result.queued ?? targets.length} job(s) de imagem enviados para a fila externa.`,
-    };
   }
 
   async function generateAllVideos() {
@@ -310,24 +290,6 @@ function Conteudos() {
       message:
         result.message ??
         `${result.queued ?? videoTargets.length} job(s) de vídeo/Reels enviados para a fila externa.`,
-    };
-  }
-
-  async function renderAllTemplates() {
-    if (!session) return;
-    const targets = activePosts.filter(
-      (post) => post.mediaUrl || post.caption || post.headline,
-    );
-    if (!targets.length) {
-      toast.info("Nenhum post ativo para aplicar template.");
-      return { message: "Nenhum post ativo para aplicar template." };
-    }
-    await renderTemplatesBatch(session.access_token, {
-      brandId: profile?.brand_id ?? targets[0]?.brandId,
-      postIds: targets.map((post) => post.id),
-    });
-    return {
-      message: `${targets.length} template(s) marcado(s) para revisão visual.`,
     };
   }
 
@@ -452,12 +414,19 @@ function Conteudos() {
             <Button
               variant="outline"
               className="rounded-full"
-              disabled={loading || processingNow || !readyForProduction.length}
+              disabled={
+                loading ||
+                processingNow ||
+                (!readyForProduction.length && !imageTargets.length)
+              }
               onClick={() =>
-                runPostAction("Fila de produção criada.", produceAll)
+                runPostAction(
+                  "Jobs de imagem/carrossel enviados para fila.",
+                  generateImagesAndCarousels,
+                )
               }
             >
-              <Sparkles className="h-4 w-4" /> Enviar todos para fila
+              <ImagePlus className="h-4 w-4" /> Gerar imagens/carrosséis
             </Button>
             <Button
               variant="outline"
@@ -487,19 +456,6 @@ function Conteudos() {
             <Button
               variant="outline"
               className="rounded-full"
-              disabled={loading || processingNow || !activePosts.length}
-              onClick={() =>
-                runPostAction(
-                  "Jobs de imagem enviados para fila.",
-                  generateAllImages,
-                )
-              }
-            >
-              <ImagePlus className="h-4 w-4" /> Gerar imagens em todos
-            </Button>
-            <Button
-              variant="outline"
-              className="rounded-full"
               disabled={loading || processingNow || !videoTargets.length}
               onClick={() =>
                 runPostAction(
@@ -509,19 +465,6 @@ function Conteudos() {
               }
             >
               <Wand2 className="h-4 w-4" /> Gerar vídeos/Reels
-            </Button>
-            <Button
-              variant="outline"
-              className="rounded-full"
-              disabled={loading || processingNow || !activePosts.length}
-              onClick={() =>
-                runPostAction(
-                  "Templates MYINC marcados para revisão.",
-                  renderAllTemplates,
-                )
-              }
-            >
-              <Sparkles className="h-4 w-4" /> Aplicar template em todos
             </Button>
             <Button
               variant="outline"
@@ -598,6 +541,7 @@ function Conteudos() {
       <Tabs defaultValue="cards" className="space-y-5">
         <TabsList className="flex h-auto flex-wrap justify-start rounded-2xl bg-muted p-1">
           <TabsTrigger value="cards">Todos ativos</TabsTrigger>
+          <TabsTrigger value="manual">Publicação manual</TabsTrigger>
           <TabsTrigger value="producao">Produção</TabsTrigger>
           <TabsTrigger value="revisao">Revisão</TabsTrigger>
           <TabsTrigger value="aprovados">Aprovados</TabsTrigger>
@@ -608,6 +552,13 @@ function Conteudos() {
         </TabsList>
         <TabsContent value="cards" className="grid gap-4 lg:grid-cols-2">
           {renderCards(activePosts)}
+        </TabsContent>
+        <TabsContent value="manual">
+          <ManualPublishPanel
+            session={session}
+            brandId={profile?.brand_id}
+            onScheduled={load}
+          />
         </TabsContent>
         <TabsContent value="producao" className="grid gap-4 lg:grid-cols-2">
           {renderCards(byStatus.producao)}
@@ -755,30 +706,6 @@ function Conteudos() {
                   />
                 </div>
                 <div className="space-y-3 rounded-2xl border border-border bg-background/60 p-4">
-                  <Button
-                    className="w-full justify-start rounded-xl"
-                    variant="outline"
-                    onClick={() =>
-                      runPostAction(
-                        "Template MYINC marcado para revisão.",
-                        () =>
-                          renderPostTemplate(session!.access_token, post.id),
-                      )
-                    }
-                  >
-                    Aplicar template MYINC
-                  </Button>
-                  <Button
-                    className="w-full justify-start rounded-xl"
-                    variant="outline"
-                    onClick={() =>
-                      runPostAction("Revisão de qualidade registrada.", () =>
-                        reviewPostQuality(session!.access_token, post.id),
-                      )
-                    }
-                  >
-                    Revisar qualidade
-                  </Button>
                   <Button
                     className="w-full justify-start rounded-xl"
                     variant="outline"

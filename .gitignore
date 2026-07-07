@@ -4,7 +4,6 @@ dist-desktop
 .vercel
 .myinc-engine
 supabase/.temp
-supabase/.temp
 .env
 .env.local
 .env.engine
@@ -12,5 +11,7 @@ supabase/.temp
 *.log
 *.tmp
 *.bak
+*.pid
+logs
 coverage
 

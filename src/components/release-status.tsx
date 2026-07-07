@@ -17,7 +17,26 @@ export function ReleaseBadge({ compact = false }: { compact?: boolean }) {
   );
 }
 
-export function ReleaseStatusCard() {
+export function ReleaseStatusCard({
+  liveStatus,
+}: {
+  /** Estado real por área "checkable" (undefined = ainda não verificado). */
+  liveStatus?: { metaReady?: boolean; dbReady?: boolean };
+}) {
+  function resolveDot(area: string): { className: string; title: string } {
+    if (area === "Publicação Meta" && liveStatus?.metaReady !== undefined) {
+      return liveStatus.metaReady
+        ? { className: "bg-success", title: "Credenciais Meta configuradas" }
+        : { className: "bg-destructive", title: "Faltam credenciais Meta" };
+    }
+    if (area === "Banco de dados" && liveStatus?.dbReady !== undefined) {
+      return liveStatus.dbReady
+        ? { className: "bg-success", title: "Banco conectado e tabelas presentes" }
+        : { className: "bg-destructive", title: "Banco sem conexão ou tabela ausente" };
+    }
+    return { className: "bg-muted-foreground/40", title: "Nota de arquitetura, não é um teste em tempo real" };
+  }
+
   return (
     <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-soft">
       <div className="border-b border-border bg-sidebar p-6 text-sidebar-foreground">
@@ -47,15 +66,18 @@ export function ReleaseStatusCard() {
         </div>
       </div>
       <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-5">
-        {STABILITY_GATES.map((gate) => (
-          <div key={gate.area} className="rounded-2xl border border-border bg-background p-4">
-            <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-success" />
-              <p className="text-sm font-bold">{gate.area}</p>
+        {STABILITY_GATES.map((gate) => {
+          const dot = resolveDot(gate.area);
+          return (
+            <div key={gate.area} className="rounded-2xl border border-border bg-background p-4">
+              <div className="flex items-center gap-2">
+                <span className={cn("h-2.5 w-2.5 rounded-full", dot.className)} title={dot.title} />
+                <p className="text-sm font-bold">{gate.area}</p>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{gate.detail}</p>
             </div>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{gate.detail}</p>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

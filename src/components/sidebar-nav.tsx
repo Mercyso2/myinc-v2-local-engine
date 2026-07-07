@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { MyIncLogo } from "@/components/myinc-logo";
 import { ReleaseBadge } from "@/components/release-status";
+import { EngineStatusBadge } from "@/components/engine-status-badge";
 import { cn } from "@/lib/utils";
 
 export const navItems = [
@@ -35,8 +36,12 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex h-16 items-center gap-2 px-6">
+      <div className="flex h-16 items-center justify-between gap-2 px-6">
         <MyIncLogo variant="white" className="h-7" />
+      </div>
+
+      <div className="px-4 pb-2">
+        <EngineStatusBadge />
       </div>
 
       <div className="px-4 pb-2 pt-3">

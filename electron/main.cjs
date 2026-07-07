@@ -1,9 +1,10 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const engine = require('./engine-process.cjs');
 const { enableAutoStart } = require('./autostart.cjs');
 const { createTray } = require('./tray.cjs');
+const { readEngineConfig, writeEngineConfig } = require('./engine-config.cjs');
 
 let mainWindow;
 let tray;
@@ -66,7 +67,11 @@ function createWindow() {
     show: true,
     icon: resolveAppIcon(),
     backgroundColor: '#09090b',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+    },
   });
 
   void loadFrontend();
@@ -78,6 +83,35 @@ function createWindow() {
     }
   });
 }
+
+function engineStatus() {
+  try {
+    const statusFile = path.join(engine.engineCwd(appRoot()), '.myinc-engine', 'status.json');
+    if (!fs.existsSync(statusFile)) return { status: engine.isRunning() ? 'starting' : 'stopped' };
+    return JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+  } catch (error) {
+    return { status: 'unknown', error: error.message };
+  }
+}
+
+ipcMain.handle('engine:get-config', () => readEngineConfig(engine.envFilePath(appRoot())));
+ipcMain.handle('engine:save-config', (_event, patch) => {
+  writeEngineConfig(engine.envFilePath(appRoot()), patch && typeof patch === 'object' ? patch : {});
+  return { ok: true };
+});
+ipcMain.handle('engine:get-status', () => ({ running: engine.isRunning(), ...engineStatus() }));
+ipcMain.handle('engine:restart', () => {
+  engine.restartEngine(appRoot());
+  return { ok: true };
+});
+ipcMain.handle('engine:pause', () => {
+  engine.stopEngine();
+  return { ok: true };
+});
+ipcMain.handle('engine:resume', () => {
+  engine.startEngine(appRoot());
+  return { ok: true };
+});
 
 app.whenReady().then(() => {
   if (process.env.ENGINE_AUTO_START === 'true') enableAutoStart(true);
